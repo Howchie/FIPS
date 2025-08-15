@@ -4,6 +4,9 @@ as.decimaltime <- function (x, ...) {
 }
 
 # POSIXct method for converting from base to decimal time
+
+#' @export
+#' 
 as.decimaltime.POSIXct <- function(stamp) {
   if (any(!inherits(stamp, c("POSIXt", "POSIXct", "POSIXlt", "Date"))))
     stop("date(s) not in POSIXt or Date format")

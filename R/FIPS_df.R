@@ -3,6 +3,8 @@ as_FIPS_df <- function (x, ...) {
   UseMethod("as_FIPS_df", x)
 }
 
+#' @export
+#' 
 as_FIPS_df.data.frame <- function(df) {
   FIPS_df(df)
 }

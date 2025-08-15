@@ -9,7 +9,7 @@ FIPS_simulate(FIPS_df, modeltype = NULL, pvec, model_formula = NULL)
 \arguments{
 \item{FIPS_df}{A valid FIPS_df series that has not already been modelled}
 
-\item{modeltype}{String: either \code{"TPM"} (Three Process Model) or \code{"unified"}.}
+\item{modeltype}{String: either \code{"TPM"} (Three Process Model), \code{"unified"}, or \code{"mccauley"} for the differential performance model.}
 
 \item{pvec}{Parameter vector (named list), see default pvecs for guidance.}
 

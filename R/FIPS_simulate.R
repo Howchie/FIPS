@@ -9,7 +9,7 @@
 #'
 #'
 #' @param FIPS_df A valid FIPS_df series that has not already been modelled
-#' @param modeltype String: either `"TPM"` (Three Process Model) or `"unified"`.
+#' @param modeltype String: either `"TPM"` (Three Process Model), `"unified"`, or `"mccauley"` for the differential performance model.
 #' @param pvec Parameter vector (named list), see default pvecs for guidance.
 #' @param model_formula An optional formula describing how the time-varying processes predictors should be calculated for the predicted output. See details.
 #'
@@ -39,12 +39,16 @@ FIPS_simulate <- function(FIPS_df, modeltype = NULL, pvec, model_formula = NULL)
   }
 
   # Returns a match.arg after tryCatch.
-  modeltype <- match.arg(arg = modeltype, choices = c("TPM", "unified"), several.ok = F)
+  modeltype <- match.arg(arg = modeltype, choices = c("TPM", "unified", "mccauley2013","mccauley2024"), several.ok = FALSE)
 
   if (modeltype == "unified") {
     sim = unified_simulation_dispatch(dat = FIPS_df, pvec = pvec, model_formula = model_formula)
   } else if (modeltype == "TPM") {
     sim = TPM_simulation_dispatch(dat = FIPS_df, pvec = pvec, model_formula = model_formula)
+  } else if (modeltype == "mccauley2013") {
+    sim <- mccauley2013_simulation_dispatch(dat = FIPS_df, pvec = pvec, model_formula = model_formula)
+  } else if (modeltype == "mccauley2024") {
+    sim <- mccauley2024_simulation_dispatch(dat = FIPS_df, pvec = pvec, model_formula = model_formula)
   }
   return(sim)
 }
