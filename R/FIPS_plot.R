@@ -277,7 +277,7 @@ FIPS_plot_overlay <- function(dats_list,
         ggplot2::aes(x = .data$sim_hours, y = .data$value, color = .data$label),
         size = 1
       ) +
-      ggplot2::labs(color = "Scenario")
+      ggplot2::labs(color = "Label")
   } else {
     p <- p +
       ggplot2::geom_line(
