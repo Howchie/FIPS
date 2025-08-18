@@ -8,7 +8,6 @@ library(tidyr)
 wake_datetime <- lubridate::ymd_hms('2025-05-03 05:00:00', tz = "Australia/Perth")
 
 # Define any number of cycles here (add rows as needed).
-# This reproduces your original: 7 days @ 4h, then 7 days @ 8h, all waking 05:00.
 cycles <- tibble::tribble(
   ~n_days, ~sleep_hrs, ~wake_time,
   7,      4,          "03:00:00",
