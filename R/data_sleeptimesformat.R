@@ -54,16 +54,16 @@
 #' @importFrom rlang := .data
 parse_sleeptimes <- function(sleeptimes, series.start, series.end,
                              roundvalue = 5, sleep.start.col, sleep.end.col, sleep.id.col) {
-
+  
   # Assert all colnames specified are actually in sleeptimes
   valid_names = checkmate::check_names(
     names(sleeptimes), permutation.of = c(sleep.id.col, sleep.start.col, sleep.end.col), what = "colnames")
-
+  
   # Let's give a very useful message for this one.
   if(valid_names != T) {
     stop("At least one of the column strings you have specified does not exist in the sleeptimes dataframe. ",
          valid_names)}
-
+  
   # Assert that series.start <= min(sleep.start.col) & length 1 & is a datetime & same timezones
   checkmate::assert_posixct(series.start, upper = min(sleeptimes[[sleep.start.col]]),
                             len = 1, .var.name = "series start datetime")
@@ -76,7 +76,7 @@ parse_sleeptimes <- function(sleeptimes, series.start, series.end,
   checkmate::assert_true(all(sleeptimes[[sleep.start.col]] < sleeptimes[[sleep.end.col]]))
   # Assert that ALL sleep end times <= series.end & all are a datetime & same timezone
   checkmate::assert_posixct(sleeptimes[[sleep.start.col]], lower = series.start, .var.name = "sleep.start datetimes")
-
+  
   # roundvalue checks for whole number, as second precision not supported
   if(roundvalue < 1) stop("roundvalue must be a whole number > 1. FIPS does not support second-level precision")
   if(!(roundvalue%%1==0)) {
@@ -85,41 +85,41 @@ parse_sleeptimes <- function(sleeptimes, series.start, series.end,
                   "User set round value of", roundvalue, "now set to", round(roundvalue)))
     # round userinput
     roundvalue = round(roundvalue)}
-
-
-
+  
+  
+  
   # Now rename the user supplied sleeptime columns to "sleep.id", "sleep.start", and "sleep.end".
   sleeptimes = sleeptimes %>%
     dplyr::rename("sleep.id" := !!sym(sleep.id.col),
                   "sleep.start" := !!sym(sleep.start.col),
                   "sleep.end" := !!sym(sleep.end.col))
-
+  
   # Round sleep and wake times to the desired epoch value
   rounded.sleeptimes <- sleeptimes %>%
     round_times("sleep.start", round_by = roundvalue) %>%
     round_times("sleep.end", round_by = roundvalue)
-
+  
   # This makes the end of the sleep period occur 5 mins prior so that wake period starts at correct epoch
   rounded.sleeptimes <- rounded.sleeptimes %>%
     dplyr::mutate(sleep.end = .data$sleep.end - lubridate::minutes(roundvalue))
-
+  
   # Assign minimum sleep start
   minimum.sleepstart = min(rounded.sleeptimes[["sleep.start"]])
   maximum.sleepend = max(rounded.sleeptimes[["sleep.end"]])
-
+  
   # Now expand out the series of sleep wake times
   processed.sleeptimes <- expand_sleep_series(rounded.sleeptimes, expand_by = roundvalue)
-
+  
   presleep.times <- NULL
   postwake.times <- NULL
-
+  
   if(series.start < minimum.sleepstart) {
     presleep.times <- generate_presleep_times(series.start, minimum.sleepstart, roundvalue)
   }
   if(series.end > maximum.sleepend) {
     postwake.times <- generate_postwake_times(series.end, maximum.sleepend, roundvalue)
   }
-
+  
   joined.times <- dplyr::bind_rows(presleep.times, processed.sleeptimes) %>%
     dplyr::bind_rows(postwake.times) %>%
     dplyr::mutate(wake_status_int = as.integer(.data$wake_status)) %>%
@@ -128,7 +128,7 @@ parse_sleeptimes <- function(sleeptimes, series.start, series.end,
     dplyr::mutate(status_duration = time_in_status(.data$wake_status, roundvalue)) %>%
     dplyr::mutate(total_prev = shifted_time_status(.data$wake_status, .data$change_point, roundvalue)) %>%
     generate_decimal_timeunits("datetime")
-
+  
   return(as_FIPS_df(joined.times))
 }
 
@@ -149,14 +149,14 @@ sleeptimes_to_FIPSdf = parse_sleeptimes
 #' @return returns expanded tibble containing sleep.id = NA (due to waking) and wake_status = T
 #' @keywords internal
 generate_presleep_times <- function(simulationstart, firstsleep, expand_by = 5) {
-    if (simulationstart >= firstsleep)
-      stop("[Developer] Simulation Start must before first sleep if using this function")
-    emins = paste(expand_by, "mins")
-    tibble::tibble(
-      datetime = seq(simulationstart, firstsleep - lubridate::minutes(expand_by), by = emins),
-      sleep.id = NA,
-      wake_status = T
-    )
+  if (simulationstart >= firstsleep)
+    stop("[Developer] Simulation Start must before first sleep if using this function")
+  emins = paste(expand_by, "mins")
+  tibble::tibble(
+    datetime = seq(simulationstart, firstsleep - lubridate::minutes(expand_by), by = emins),
+    sleep.id = NA,
+    wake_status = T
+  )
 }
 
 #' Fill post-observation wake times
@@ -198,7 +198,7 @@ generate_postwake_times <- function(simulationend, lastwake, expand_by = 5) {
 #' @export
 round_times <- function(.stdata, colname, round_by = 5) {
   if(round_by < 5) warning("Rounding less than 5 will result in an excessively large dataframe for long series")
-
+  
   colname = rlang::ensym(colname)
   .stdata %>%
     dplyr::mutate(!!colname := lubridate::round_date(!!colname, paste(round_by, "mins")))
@@ -216,9 +216,9 @@ round_times <- function(.stdata, colname, round_by = 5) {
 #' @return Sleeptimedataframe with single columns vector for datetime and wake status
 #' @keywords internal
 expand_sleep_series <- function(.stdata, expand_by = 5) {
-
+  
   emins = paste(expand_by, "mins")
-
+  
   .stdata %>%
     dplyr::group_by(.data$sleep.id) %>%
     tidyr::expand(datetime = seq(min(.data$sleep.start), max(.data$sleep.end), by = emins)) %>%
@@ -227,3 +227,105 @@ expand_sleep_series <- function(.stdata, expand_by = 5) {
     tidyr::complete(datetime = seq(min(.data$datetime), max(.data$datetime), by = emins), fill = list(wake_status = T))
 }
 
+# Build N arbitrary cycles of sleep from an anchor wake datetime.
+# `cycles` must have columns:
+#   - n_days (integer): how many days in this cycle
+#   - sleep_hrs (numeric): sleep duration (hours) for this cycle
+#' @export
+#' 
+build_sleeptimes <- function(anchor_wake, cycles, tz = NULL) {
+  stopifnot(inherits(anchor_wake, "POSIXct"))
+  tz <- tz %||% lubridate::tz(anchor_wake)
+  default_wake_time <- format(lubridate::with_tz(anchor_wake, tz), "%H:%M:%S")
+  anchor_date <- as.Date(lubridate::with_tz(anchor_wake, tz),tz=tz)
+  
+  cycles = cycles %>%
+    mutate(
+      n_days    = as.integer(n_days),
+      sleep_hrs = as.numeric(sleep_hrs),
+      wake_time = if ("wake_time" %in% names(.)) wake_time else NA_character_,
+      wake_time = tidyr::replace_na(wake_time, default_wake_time),
+      cycle     = dplyr::row_number(),
+      start_idx = dplyr::lag(cumsum(n_days), default = 0L)
+    ) 
+  per_day <- purrr::map_dfr(seq_len(nrow(cycles)), function(i) {
+    tibble(
+      day_index = seq.int(from = cycles$start_idx[i],
+                          length.out = cycles$n_days[i]),
+      sleep_hrs = cycles$sleep_hrs[i],
+      wake_time = cycles$wake_time[i]
+    )
+  })
+  # Compose wake datetimes: (anchor_date + day_index) + cycle-specific time-of-day
+  wake_date <- anchor_date + per_day$day_index
+  tod <- lubridate::hms(per_day$wake_time)             # "HH:MM:SS" -> Period
+  wake_dt   <- ymd_hms(paste(wake_date, per_day$wake_time), tz = tz)
+  
+  tibble(
+    sleep.start = wake_dt - lubridate::dhours(per_day$sleep_hrs),
+    sleep.end   = wake_dt
+  ) %>%
+    arrange(sleep.start) %>%
+    mutate(sleep.id = row_number())
+}
+
+# schedule columns (per row):
+#   n_days (int)            : number of calendar days this shift appears
+#   start_time, end_time    : "HH:MM:SS"
+#   label (chr, optional)   : name for the shift
+#   start_offset (int, opt) : how many days after anchor to start (default 0)
+#' @export
+#' 
+build_shifts <- function(anchor_date, schedule, tz) {
+  # normalize anchor_date to Date in the target tz
+  if (inherits(anchor_date, "POSIXt")) {
+    anchor_date <- as_date(with_tz(anchor_date, tz))
+  } else {
+    anchor_date <- as_date(anchor_date)
+  }
+  
+  if (!"label" %in% names(schedule))       schedule$label <- NA_character_
+  if (!"start_offset" %in% names(schedule)) schedule$start_offset <- 0L
+  
+  schedule %>%
+    mutate(
+      n_days       = as.integer(n_days),
+      start_offset = as.integer(start_offset),
+      label        = coalesce(label, paste0("shift_", row_number())),
+      start_time   = as.character(start_time),
+      end_time     = as.character(end_time)
+    ) %>%
+    tidyr::uncount(n_days, .remove = FALSE, .id = "day_idx") %>%
+    mutate(
+      # independent day indices per row
+      day_index   = start_offset + day_idx,
+      date        = anchor_date + day_index,
+      shift_start = ymd_hms(paste(date, start_time), tz = tz),
+      raw_end     = ymd_hms(paste(date, end_time),   tz = tz),
+      # roll over midnight if needed
+      shift_end   = if_else(raw_end <= shift_start, raw_end + days(1), raw_end)
+    ) %>%
+    arrange(shift_start) %>%
+    mutate(shift_id = row_number()) %>%
+    select(shift_id, label, date, day_index, shift_start, shift_end)
+}
+
+# Tag a point-in-time dataframe (duplicates if shifts overlap by design)
+#' @export
+#' 
+tag_shifts <- function(df, shifts) {
+  stopifnot(inherits(df$datetime, "POSIXct"),
+            inherits(shifts$shift_start, "POSIXct"),
+            inherits(shifts$shift_end, "POSIXct"))
+  
+  # optional sanity check: timezones should match
+  if (!identical(lubridate::tz(df$datetime[1]), lubridate::tz(shifts$shift_start[1]))) {
+    warning("Time zones differ between df$datetime and shifts; align before joining.")
+  }
+  
+  df %>%
+    dplyr::left_join(
+      shifts %>% dplyr::select(shift_id, label, shift_start, shift_end),
+      by = dplyr::join_by(datetime >= shift_start, datetime < shift_end)
+    )
+}

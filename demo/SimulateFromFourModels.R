@@ -2,48 +2,35 @@
 library(FIPS)
 library(dplyr)
 library(lubridate)
-sleeptimes_common <- tibble::tibble(
-  sleep.start = seq(
-    from = lubridate::ymd_hms('2018-05-03 01:00:00', tz = "Australia/Perth"),
-    to = lubridate::ymd_hms('2018-05-11 05:00:00', tz = "Australia/Perth"),
-    by = '24 hours'),
-  sleep.end = sleep.start + lubridate::dhours(8),
-  sleep.id = rank(sleep.start)+7)
+library(tidyr)
 
-wake_datetime = lubridate::ymd_hms('2018-05-03 05:00:00', tz = "Australia/Perth")
-ndays_deprived =7; n_days_recover=7
-sleep_hrs_deprived = 4; sleep_hrs_recover=8
+# Anchor (first wake) and series bounds
+wake_datetime <- lubridate::ymd_hms('2025-05-03 05:00:00', tz = "Australia/Perth")
 
-sleeptimes <- rbind(
-  tibble(
-    sleep.start = seq(
-      from = wake_datetime - hours(sleep_hrs_deprived),
-      to = wake_datetime - hours(sleep_hrs_deprived) + days(ndays_deprived - 1),
-      by = '24 hours'),
-    sleep.end = sleep.start + lubridate::dhours(sleep_hrs_deprived)
-  ),
-  tibble(
-    sleep.start = seq(
-      from =wake_datetime - hours(sleep_hrs_deprived) + days(ndays_deprived),
-      to = wake_datetime - hours(sleep_hrs_recover)  + days(ndays_deprived) + days(n_days_recover),
-      by = '24 hours'),
-    sleep.end = sleep.start + lubridate::dhours(sleep_hrs_recover)
-  )
-) %>%
-  mutate(sleep.id = rank(sleep.start))
-
-simulation_df = parse_sleeptimes(
-  sleeptimes = sleeptimes ,
-  series.start = lubridate::ymd_hms('2018-05-02 21:00:00', tz = "Australia/Perth"),
-  series.end = lubridate::ymd_hms('2018-05-19 23:00:00', tz = "Australia/Perth"),
-  sleep.start.col = "sleep.start",
-  sleep.end.col = "sleep.end",
-  sleep.id.col = "sleep.id",
-  roundvalue = 5
+# Define any number of cycles here (add rows as needed).
+# This reproduces your original: 7 days @ 4h, then 7 days @ 8h, all waking 05:00.
+cycles <- tibble::tribble(
+  ~n_days, ~sleep_hrs, ~wake_time,
+  7,      4,          "03:00:00",
+  7,      8,          "07:00:00",
+  3,       5,          "18:00:00",
+  4,       10,         "08:30:00"
 )
 
-simulation_df <- simulation_df %>%
-  dplyr::filter(datetime>=sleeptimes$sleep.start[1])
+sleeptimes <- build_sleeptimes(anchor_wake = wake_datetime, cycles = cycles, tz = "Australia/Perth")
+
+# Feed into FIPS parser
+simulation_df <- parse_sleeptimes(
+  sleeptimes = sleeptimes,
+  series.start = lubridate::ymd_hms('2025-05-02 23:00:00', tz = "Australia/Perth"),
+  series.end   = lubridate::ymd_hms('2025-05-23 23:00:00', tz = "Australia/Perth"),
+  sleep.start.col = "sleep.start",
+  sleep.end.col   = "sleep.end",
+  sleep.id.col    = "sleep.id",
+  roundvalue = 5
+) %>%
+  dplyr::filter(datetime >= sleeptimes$sleep.start[1])
+
 
 ## Simulations
 # Simulate from Unified Model
@@ -148,6 +135,38 @@ simulation_mccauley2024 <- FIPS_simulate(
   )
 )
 
+# Simulate from the McCauley (2024) model with KSS parameterization
+simulation_mccauley2024_KSS <- FIPS_simulate(
+  FIPS_df = simulation_df ,
+  modeltype = "mccauley2024",
+  pvec = mccauley2024_make_pvec(
+    alpha_w = 0.022,   
+    alpha_s = 0.037,   
+    beta_w  = 0.26,   
+    beta_s  = 0.26,   
+    eta_w   = 0.0126,  
+    Wc      =  22.02, 
+    Tp      = 24,
+    mu_w    = .82,
+    mu_s    = -1.50,
+    phi     = 21.2,     
+    lambda_w =  0.49,    
+    lambda_s =  0.49,
+    xi_u      =  0.51,
+    xi_k      =  0.51,
+    xi_h      =  0.51,
+    p0=ODE_init$p_sleep_start,
+    u0=ODE_init$u_sleep_start,
+    k0=ODE_init$k_sleep_start,
+    pf=1,h0=0,
+    zeta_w  = 1.31,    
+    zeta_s  = 1.31,
+    v_w=1.37,
+    v_s=1.37,
+    gamma=.71
+  )
+)
+
 # Showcase new overlayed plot
 plots <- FIPS_plot_overlay(
   list(
@@ -157,9 +176,38 @@ plots <- FIPS_plot_overlay(
   ),
   plot_stat = "fatigue"
 )
-
 plots
 
 # Haven't figured out how (or if) to show different stats on same figure
-plot(simulation_tpm,plot_stat="KSS")
+plots <- FIPS_plot_overlay(
+  list(
+    TPM=simulation_tpm,
+    mccauley2024 = simulation_mccauley2024_KSS
+  ),
+  plot_stat = "KSS"
+)
+plots
 
+## Demo shift-tagging feature to e.g. extract mean fatigue per shift across a time period
+# anchor for the first day we want to generate shifts for
+anchor <- as_date(min(simulation_mccauley2024$datetime))  # or a fixed Date
+tz <- "Australia/Perth"
+
+shift_schedule <- tibble::tribble(
+  ~n_days, ~start_time, ~end_time, ~label,
+  14L,      "09:00:00",  "17:00:00", "Day"
+)
+
+shifts <- build_shifts(anchor, shift_schedule, tz)
+
+df_tagged <- tag_shifts(simulation_mccauley2024, shifts)
+
+# Now you can summarise by shift
+summary_by_shift <- df_tagged %>%
+  group_by(shift_id, label) %>%
+  summarise(
+    n = n(),
+    mean_fatigue = mean(fatigue, na.rm = TRUE),
+    .groups = "drop"
+  )
+plot(summary_by_shift$mean_fatigue)
