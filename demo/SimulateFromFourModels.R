@@ -3,7 +3,7 @@ library(FIPS)
 library(dplyr)
 library(lubridate)
 library(tidyr)
-
+library(ggplot2)
 # Anchor (first wake) and series bounds
 wake_datetime <- lubridate::ymd_hms('2025-05-03 05:00:00', tz = "Australia/Perth")
 
@@ -170,7 +170,6 @@ simulation_mccauley2024_KSS <- FIPS_simulate(
 plots <- FIPS_plot_overlay(
   list(
     unified=simulation_unified,
-    mccauley2013 = simulation_mccauley2013,
     mccauley2024 = simulation_mccauley2024
   ),
   plot_stat = "fatigue"
@@ -193,8 +192,10 @@ anchor <- as_date(min(simulation_mccauley2024$datetime))  # or a fixed Date
 tz <- "Australia/Perth"
 
 shift_schedule <- tibble::tribble(
-  ~n_days, ~start_time, ~end_time, ~label,
-  14L,      "09:00:00",  "17:00:00", "Day"
+  ~n_days, ~start_time, ~end_time, ~label, ~start_offset,
+  13L,      "09:00:00",  "17:00:00", "Day", 0,
+  3,        "20:00:00",  "04:00:00", "Night", 13,
+  4L,      "09:00:00",  "17:00:00", "Day", 17
 )
 
 shifts <- build_shifts(anchor, shift_schedule, tz)
@@ -208,5 +209,139 @@ summary_by_shift <- df_tagged %>%
     n = n(),
     mean_fatigue = mean(fatigue, na.rm = TRUE),
     .groups = "drop"
-  )
+  ) %>% filter(!is.na(label))
 plot(summary_by_shift$mean_fatigue)
+
+library(rlang)
+
+# df:       time series with a POSIXct 'datetime' column + your metric
+# metric:   bare column name in df (e.g., fatigue)
+# shifts:   data frame with shift_start, shift_end, label (from build_shifts)
+# series:   optional bare column in df to color lines/points (e.g., Label)
+# shade_df: optional intervals to shade (cols: start, end, label). If NULL, uses shifts.
+# x_mode:   "hours" for hours since start, or "datetime" for real time axis
+plot_shift_metric <- function(df,
+                              metric,
+                              shifts,
+                              series = NULL,
+                              shade_df = NULL,
+                              x_mode = c("hours", "datetime"),
+                              shade_alpha = 0.12,
+                              thresholds=NULL) {
+  x_mode <- match.arg(x_mode)
+  metric_quo <- rlang::enquo(metric)
+  series_quo <- rlang::enquo(series)
+  
+  stopifnot(inherits(df$datetime, "POSIXct"))
+  stopifnot(all(c("shift_start","shift_end") %in% names(shifts)))
+  
+  # Tag rows with their shift (dplyr non-equi join, right-open [start,end))
+  df_tag <- df %>% 
+    left_join(
+      shifts %>% select(shift_id, label, shift_start, shift_end),
+      by = join_by(datetime >= shift_start, datetime < shift_end)
+    )
+  
+  # Summaries per shift (and per series if provided)
+  group_vars <- c("shift_id", "label", "shift_start", "shift_end")
+  if (!rlang::quo_is_null(series_quo)) {
+    df_tag <- df_tag %>% mutate(.series = !!series_quo)
+    group_vars <- c(group_vars, ".series")
+  }
+  
+  shift_summ <- df_tag %>%
+    group_by(across(all_of(group_vars))) %>%
+    summarise(
+      y_mean = mean(!!metric_quo, na.rm = TRUE),
+      y_min  = min(!!metric_quo, na.rm = TRUE),
+      y_max  = max(!!metric_quo, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(shift_mid = shift_start + (shift_end - shift_start)/2)
+  
+  # X mapping (hours since start or datetime)
+  t0 <- min(df$datetime, shifts$shift_start, na.rm = TRUE)
+  
+  map_x <- function(t) {
+    if (x_mode == "hours") as.numeric(difftime(t, t0, units = "hours")) else t
+  }
+  
+  df_plot <- df %>%
+    mutate(.x = map_x(datetime),
+           .y = !!metric_quo)
+  
+  summ_plot <- shift_summ %>%
+    mutate(.x_mid = map_x(shift_mid))
+  
+  # Shading intervals: use provided shade_df if given, otherwise use shifts
+  if (is.null(shade_df)) {
+    shade_df <- shifts %>%
+      transmute(start = shift_start, end = shift_end, label = label %||% "Shift")
+  } else {
+    stopifnot(all(c("start","end") %in% names(shade_df)))
+  }
+  shade_plot <- shade_df %>%
+    transmute(
+      xmin = map_x(start),
+      xmax = map_x(end),
+      label = label
+    )
+  
+  # Day break lines
+  x_min_dt <- min(df$datetime, na.rm = TRUE)
+  x_max_dt <- max(df$datetime, na.rm = TRUE)
+  day_breaks <- seq(floor_date(x_min_dt, "day"),
+                    ceiling_date(x_max_dt, "day"),
+                    by = "1 day")
+  vline_x <- map_x(day_breaks)
+  # Build plot ---------------------------------------------------------------
+  p <- ggplot()
+  
+  # background shading
+  p <- p + geom_rect(
+    data = shade_plot,
+    aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+    inherit.aes = FALSE,
+    fill = "grey50", alpha = shade_alpha
+  )
+  
+  # day grid
+  p <- p + geom_vline(xintercept = vline_x, linetype = 3, linewidth = 0.3) +
+    geom_hline(yintercept = thresholds, linetype = 2, linewidth = 0.3)
+  
+  
+  # shift summaries: error bars (min–max) + mean point
+  if (!rlang::quo_is_null(series_quo)) {
+    p <- p +
+      geom_errorbar(data = summ_plot, aes(x = .x_mid, ymin = y_min, ymax = y_max, color = .series), width = 0) +
+      geom_point    (data = summ_plot, aes(x = .x_mid, y = y_mean, color = .series), size = 2)
+  } else {
+    p <- p +
+      geom_errorbar(data = summ_plot, aes(x = .x_mid, ymin = y_min, ymax = y_max), width = 0) +
+      geom_point    (data = summ_plot, aes(x = .x_mid, y = y_mean), size = 2)
+  }
+  
+  # labels & theme
+  xlab_txt <- if (x_mode == "hours") "Simulation Hours" else "Time"
+  p +
+    labs(x = xlab_txt, y = rlang::as_name(metric_quo)) +
+    theme_classic(base_size = 12)
+}
+
+# Assume you already have:
+#   simulation_df: with columns datetime (POSIXct), fatigue, Label (model name), etc.
+#   shifts:        from build_shifts(...)
+
+# Shade sleep instead of shifts? Build a generic interval df:
+sleep_shade <- sleeptimes %>%
+  transmute(start = sleep.start, end = sleep.end, label = "Sleep")
+
+plot_shift_metric(
+  df        = simulation_mccauley2024,
+  metric    = fatigue,
+  shifts    = shifts,          # used for per-shift summaries
+  shade_df  = sleep_shade,     # background shading (optional)
+  x_mode    = "datetime",
+  thresholds=c(11,20)# or "datetime"
+)
+

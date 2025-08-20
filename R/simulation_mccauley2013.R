@@ -31,8 +31,8 @@ mccauley2013_check_pvec <- function(pvec) {
 #'
 #' @param alpha_w Homeostatic dissipation rate for performance during wakefulness
 #' @param alpha_s Homeostatic dissipation rate for performance during sleep
-#' @param beta_w Scaling factor for \code{u} during wakefulness
-#' @param beta_s Scaling factor for \code{u} during sleep
+#' @param eta_w Scaling factor for \code{u} during wakefulness
+#' @param eta_s Scaling factor for \code{u} during sleep
 #' @param kappa Build-up rate for \code{u} during wakefulness
 #' @param mu_w Offset of circadian process during wakefulness
 #' @param mu_s Offset of circadian process during sleep
@@ -66,7 +66,7 @@ mccauley2013_make_pvec <- function(alpha_w = 0.028,
   pvec
 }
 
-#' Default parameter vector for the Differential Performance Model
+#' Default parameter vector for the McCauley Model
 #'
 #' @export
 mccauley2013_pvec <- mccauley2013_make_pvec()

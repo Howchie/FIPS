@@ -39,14 +39,12 @@ FIPS_simulate <- function(FIPS_df, modeltype = NULL, pvec, model_formula = NULL)
   }
 
   # Returns a match.arg after tryCatch.
-  modeltype <- match.arg(arg = modeltype, choices = c("TPM", "unified", "mccauley2013","mccauley2024"), several.ok = FALSE)
+  modeltype <- match.arg(arg = modeltype, choices = c("TPM", "unified", "mccauley2024"), several.ok = FALSE)
 
   if (modeltype == "unified") {
     sim = unified_simulation_dispatch(dat = FIPS_df, pvec = pvec, model_formula = model_formula)
   } else if (modeltype == "TPM") {
     sim = TPM_simulation_dispatch(dat = FIPS_df, pvec = pvec, model_formula = model_formula)
-  } else if (modeltype == "mccauley2013") {
-    sim <- mccauley2013_simulation_dispatch(dat = FIPS_df, pvec = pvec, model_formula = model_formula)
   } else if (modeltype == "mccauley2024") {
     sim <- mccauley2024_simulation_dispatch(dat = FIPS_df, pvec = pvec, model_formula = model_formula)
   }

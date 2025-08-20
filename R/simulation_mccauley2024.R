@@ -2,7 +2,7 @@
 #'
 #' Checks the pvec contains required parameters.
 #'
-#' @param pvec The pvec to check contains all required three process model parameters
+#' @param pvec The pvec to check contains all required model parameters
 #'
 #' @return logical
 mccauley2024_check_pvec <- function(pvec) {
@@ -23,22 +23,26 @@ mccauley2024_check_pvec <- function(pvec) {
   TRUE
 }
 
-#' Make McCauley Model Parameter Vector
+#' Make McCauley (2024) Model Parameter Vector
 #'
-#' Creates a parameter vector with defaults drawn from the published model. The
-#' values provided here are placeholders that approximate those reported in the
-#' paper and can be altered as required.
+#' Creates a parameter vector with defaults drawn from the published model.
 #'
-#' @param alpha_w Homeostatic dissipation rate for performance during wakefulness
+#' @param alpha_w Homeostatic build-up rate for performance during wakefulness
 #' @param alpha_s Homeostatic dissipation rate for performance during sleep
-#' @param beta_w Scaling factor for \code{u} during wakefulness
-#' @param beta_s Scaling factor for \code{u} during sleep
-#' @param kappa Build-up rate for \code{u} during wakefulness
+#' @param beta_w Scaling factor for impact of u(t) onto p(t) during wakefulness
+#' @param beta_s Scaling factor for impact of u(t) onto p(t) during sleep
+#' @param eta_w Build-up rate for u(t) during wakefulness
+#' @param eta_s Dissipation rate for u(t) during sleep
+#' @param Wc Critical threshold (for bifurcation)
+#' @param Tp Time period, usually 24hr
 #' @param mu_w Offset of circadian process during wakefulness
 #' @param mu_s Offset of circadian process during sleep
 #' @param phi Phase position of circadian process
 #' @param lambda Rate constant for modulation of circadian amplitude
-#' @param A Asymptotic amplitude of circadian modulation
+#' @param xi Metric-dependent scaling factor for the effects of u(t), κ(t) and h(t)
+#' @param zeta Scaling factor for impact of p(t) onto u(t)
+#' @param gamma_h Scaling factor for dynamic asymptote of h(t) during sleep
+#' @param v Decay rate for h(t) during wakefulness/sleep
 #' @param p0 Initial value for the performance process
 #' @param u0 Initial value for the homeostatic process
 #' @param k0 Initial value for the circadian amplitude
@@ -55,11 +59,11 @@ mccauley2024_make_pvec <- function(alpha_w = 0.028,
                                mu_s    = -1.50,
                                phi     = 21.2,     
                                lambda_w=  0.49,    
-                               lambda_s=  -0.49,
+                               lambda_s=  0.49,
                                xi_u      =  1.09,
                                xi_k      =  1.09,
                                xi_h      =  1.09,
-                               p0=5.22,u0=38.5,k0=.0212,pf=0,h0=0,
+                               p0=5.22,u0=38.5,k0=.0212,pf=0,h0=0, # not exact but close enough for a steady state at 8hrs sleep
                                # NEW PARAMETERS from 2024 papers
                                zeta_w  = 1.31,    
                                zeta_s  = 1.31,
@@ -75,7 +79,7 @@ mccauley2024_make_pvec <- function(alpha_w = 0.028,
   pvec
 }
 
-#' Default parameter vector for the Differential Performance Model
+#' Default parameter vector for the McCauley 2024 model
 #'
 #' @export
 mccauley2024_pvec <- mccauley2024_make_pvec()
@@ -104,7 +108,7 @@ mccauley2024_append_model_cols  <- function(.FIPS_df) {
     #c_t  <- unified_Cfun(t_abs%%Tp,phi) # optionally allow use of 5-harmonic Circadian function
     eta_s <- derive_eta_s_2024(eta_w, Wc, Tp)
     g_w <- k * (c_t + mu_w)
-    g_s <- k * (c_t + mu_s) #+ ((alpha_s*beta_s)/eta_w)*((Wc-Tp)/Wc)
+    g_s <- k * (c_t + mu_s)
     if (wake) {
 
       dp <- -alpha_w * (p - pf) + alpha_w*beta_w*u + xi_h*(alpha_w -v_w)*h + xi_k*g_w
@@ -144,7 +148,7 @@ mccauley2024_append_model_cols  <- function(.FIPS_df) {
 
 #' Simulate: McCauley Model
 #'
-#' Runs the McCauley et al. (2024) PVT model over the supplied FIPS_df.
+#' Runs the McCauley et al. (2024) model over the supplied FIPS_df.
 #'
 #' @param pvec Parameter vector, see [mccauley2024_pvec]
 #' @param dat Input dataframe (ensure this is a FIPS_df)
@@ -218,3 +222,5 @@ mccauley2024_simulation_dispatch  <- function(dat, pvec, model_formula = NULL, s
   }
   dat
 }
+
+
