@@ -3,14 +3,14 @@
 \docType{data}
 \name{mccauley2024_pvec}
 \alias{mccauley2024_pvec}
-\title{Default parameter vector for the Differential Performance Model}
+\title{Default parameter vector for the McCauley 2024 model}
 \format{
-An object of class \code{numeric} of length 25.
+An object of class \code{numeric} of length 26.
 }
 \usage{
 mccauley2024_pvec
 }
 \description{
-Default parameter vector for the Differential Performance Model
+Default parameter vector for the McCauley 2024 model
 }
 \keyword{datasets}

@@ -7,7 +7,7 @@
 mccauley2024_check_pvec(pvec)
 }
 \arguments{
-\item{pvec}{The pvec to check contains all required three process model parameters}
+\item{pvec}{The pvec to check contains all required model parameters}
 }
 \value{
 logical

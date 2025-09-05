@@ -2,7 +2,7 @@
 % Please edit documentation in R/simulation_mccauley2024.R
 \name{mccauley2024_make_pvec}
 \alias{mccauley2024_make_pvec}
-\title{Make McCauley Model Parameter Vector}
+\title{Make McCauley (2024) Model Parameter Vector}
 \usage{
 mccauley2024_make_pvec(
   alpha_w = 0.028,
@@ -12,11 +12,11 @@ mccauley2024_make_pvec(
   eta_w = 0.0126,
   Wc = 20.2,
   Tp = 24,
-  mu_w = 0.466,
+  mu_w = 0.46,
   mu_s = -1.5,
   phi = 21.2,
   lambda_w = 0.49,
-  lambda_s = -0.49,
+  lambda_s = 0.49,
   xi_u = 1.09,
   xi_k = 1.09,
   xi_h = 1.09,
@@ -24,7 +24,7 @@ mccauley2024_make_pvec(
   u0 = 38.5,
   k0 = 0.0212,
   pf = 0,
-  h0 = 0,
+  h0 = 0.02,
   zeta_w = 1.31,
   zeta_s = 1.31,
   v_w = 1.37,
@@ -33,13 +33,19 @@ mccauley2024_make_pvec(
 )
 }
 \arguments{
-\item{alpha_w}{Homeostatic dissipation rate for performance during wakefulness}
+\item{alpha_w}{Homeostatic build-up rate for performance during wakefulness}
 
 \item{alpha_s}{Homeostatic dissipation rate for performance during sleep}
 
-\item{beta_w}{Scaling factor for \code{u} during wakefulness}
+\item{beta_w}{Scaling factor for impact of u(t) onto p(t) during wakefulness}
 
-\item{beta_s}{Scaling factor for \code{u} during sleep}
+\item{beta_s}{Scaling factor for impact of u(t) onto p(t) during sleep}
+
+\item{eta_w}{Build-up rate for u(t) during wakefulness}
+
+\item{Wc}{Critical threshold (for bifurcation)}
+
+\item{Tp}{Time period, usually 24hr}
 
 \item{mu_w}{Offset of circadian process during wakefulness}
 
@@ -53,14 +59,18 @@ mccauley2024_make_pvec(
 
 \item{k0}{Initial value for the circadian amplitude}
 
-\item{kappa}{Build-up rate for \code{u} during wakefulness}
+\item{gamma_h}{Scaling factor for dynamic asymptote of h(t) during sleep}
+
+\item{eta_s}{Dissipation rate for u(t) during sleep}
 
 \item{lambda}{Rate constant for modulation of circadian amplitude}
 
-\item{A}{Asymptotic amplitude of circadian modulation}
+\item{xi}{Metric-dependent scaling factor for the effects of u(t) k(t) and h(t)}
+
+\item{zeta}{Scaling factor for impact of p(t) onto u(t)}
+
+\item{v}{Decay rate for h(t) during wakefulness/sleep}
 }
 \description{
-Creates a parameter vector with defaults drawn from the published model. The
-values provided here are placeholders that approximate those reported in the
-paper and can be altered as required.
+Creates a parameter vector with defaults drawn from the published model.
 }

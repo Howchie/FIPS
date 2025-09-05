@@ -126,6 +126,7 @@ parse_sleeptimes <- function(sleeptimes, series.start, series.end,
     dplyr::mutate(change_point = change_points(.data$wake_status_int)) %>%
     dplyr::mutate(switch_direction = status_dir(.data$wake_status_int, .data$change_point)) %>%
     dplyr::mutate(status_duration = time_in_status(.data$wake_status, roundvalue)) %>%
+    dplyr::mutate(time_awake = ifelse(.data$wake_status, .data$status_duration, NA)) %>%
     dplyr::mutate(total_prev = shifted_time_status(.data$wake_status, .data$change_point, roundvalue)) %>%
     generate_decimal_timeunits("datetime")
   
@@ -238,15 +239,17 @@ build_sleeptimes <- function(anchor_wake, cycles, tz = NULL) {
   tz <- tz %||% lubridate::tz(anchor_wake)
   default_wake_time <- format(lubridate::with_tz(anchor_wake, tz), "%H:%M:%S")
   anchor_date <- as.Date(lubridate::with_tz(anchor_wake, tz),tz=tz)
-  
+  if (!"start_idx"%in%names(cycles)) {
+    cycles <- cycles %>%
+      mutate(start_idx = dplyr::lag(cumsum(n_days), default = 0L))
+  }
   cycles = cycles %>%
     mutate(
       n_days    = as.integer(n_days),
       sleep_hrs = as.numeric(sleep_hrs),
       wake_time = if ("wake_time" %in% names(.)) wake_time else NA_character_,
       wake_time = tidyr::replace_na(wake_time, default_wake_time),
-      cycle     = dplyr::row_number(),
-      start_idx = dplyr::lag(cumsum(n_days), default = 0L)
+      cycle     = dplyr::row_number()
     ) 
   per_day <- purrr::map_dfr(seq_len(nrow(cycles)), function(i) {
     tibble(
@@ -260,7 +263,6 @@ build_sleeptimes <- function(anchor_wake, cycles, tz = NULL) {
   wake_date <- anchor_date + per_day$day_index
   tod <- lubridate::hms(per_day$wake_time)             # "HH:MM:SS" -> Period
   wake_dt   <- ymd_hms(paste(wake_date, per_day$wake_time), tz = tz)
-  
   tibble(
     sleep.start = wake_dt - lubridate::dhours(per_day$sleep_hrs),
     sleep.end   = wake_dt

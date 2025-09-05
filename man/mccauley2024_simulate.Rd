@@ -2,7 +2,8 @@
 % Please edit documentation in R/simulation_mccauley2024.R
 \name{mccauley2024_simulate}
 \alias{mccauley2024_simulate}
-\title{Simulate: McCauley Model}
+\title{Simulate: McCauley Model
+Runs the McCauley et al. (2024) model over the supplied FIPS_df.}
 \usage{
 mccauley2024_simulate(pvec, dat, substep_minutes = 2)
 }
@@ -15,5 +16,6 @@ mccauley2024_simulate(pvec, dat, substep_minutes = 2)
 Dataframe with simulation results
 }
 \description{
-Runs the McCauley et al. (2024) PVT model over the supplied FIPS_df.
+Simulate: McCauley Model
+Runs the McCauley et al. (2024) model over the supplied FIPS_df.
 }
