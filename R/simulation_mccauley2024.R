@@ -7,7 +7,7 @@
 #' @return logical
 mccauley2024_check_pvec <- function(pvec) {
   accepted_names <- c("alpha_w","alpha_s","beta_w","beta_s","eta_s",
-                      "eta_w","Wc","Tp",               
+                      "eta_w","Wc","Tp",          
                       "mu_w","mu_s","phi",         
                       "lambda_w","lambda_s","xi_u","xi_k","xi_h","p0","u0","k0","zeta_w","zeta_s","pf","v_w","v_s","gamma_h","h0")
   diffvals <- setdiff(names(pvec), accepted_names)
@@ -25,7 +25,7 @@ mccauley2024_check_pvec <- function(pvec) {
 
 # Single-harmonic circadian, time t in hours (absolute), phi in hours
 # @return Circadian modulation value
-mccauley2024_cfun <- function(t, phi=21.2, tau=24) {
+mccauley_cfun <- function(t, phi=21.2, tau=24) {
   sin( 2*pi * (t - phi)/tau )
 }
 
@@ -74,13 +74,14 @@ mccauley2024_make_pvec <- function(alpha_w = 0.028,
                                xi_u      =  1.09,
                                xi_k      =  1.09,
                                xi_h      =  1.09,
-                               p0=5.22,u0=38.5,k0=.0212,pf=0,h0=0.02, # placeholders, use inits function
+                               p0=5.22,u0=28.5,k0=.0212,pf=0,h0=0.02, # placeholders, use inits function
                                # NEW PARAMETERS from 2024 papers
                                zeta_w  = 1.31,    
                                zeta_s  = 1.31,
                                v_w=1.37,
                                v_s=1.37,
-                               gamma_h=0.71) {
+                               gamma_h=0.71
+                               ) {
   eta_s <- derive_eta_s_2024(eta_w, Wc, Tp)
   pvec <- c(alpha_w=alpha_w, alpha_s=alpha_s, beta_w=beta_w, beta_s=beta_s,
             eta_w=eta_w, eta_s=eta_s,Wc=Wc, Tp=Tp,mu_w=mu_w, mu_s=mu_s, phi=phi,
@@ -94,126 +95,186 @@ mccauley2024_make_pvec <- function(alpha_w = 0.028,
 #'
 #' @export
 mccauley2024_pvec <- mccauley2024_make_pvec()
+mccauley2024_cols <- c("p","u","k","h")
+# Root function: return 0 at switching moments
+# check transition to/from bed
+.mccauley_rootfun <- function(t, y, parms, pvec_C, df, change_points, dynamic_vars,...) {
+  if (t > 1) {
+    g_change <- as.numeric(all((t - change_points) != 0))
+    g_CBTmin <- 1
+    if ("x" %in% names(y)) { # if we're fitting the dynamic state variable, use that
+      if (dynamic_vars$model == "K99") {
+        cur_phase = atan2(y["xc"], y["x"])
+        g_CBTmin = -2.98 - cur_phase # cross the CBT-min threshold (Ref Woelders et al 2017, citing May et al 2002)
+      } else if (dynamic_vars$model == "FJK") {
+        g_CBTmin = unlist(.FJK_derivs(t, y, pvec_C, df, dynamic_vars = dynamic_vars))[2]
+      }
+    }
+  } else {g_change=1;g_CBTmin=1}
+  return(c(g_change,g_CBTmin))
+}
 
-
-# Internal helper to append model columns to a FIPS_df
-mccauley2024_cols  <- c("p", "u", "k", "h","c")
-mccauley2024_append_model_cols  <- function(.FIPS_df) {
-  .FIPS_df[, mccauley2024_cols] <- NA
-  .FIPS_df
+.mccauley_eventfun <- function(t, y, pvec, pvec_C, df, change_points, dynamic_vars,...) {
+  g = .mccauley_rootfun(t, y, pvec, pvec_C, df, change_points, dynamic_vars)
+  if (g[1] == 0) {
+    j = which(df$t_abs == t)
+    if (df$switch_direction[j] == "Wake") {
+      y["S"] = 0
+    } else {
+      y["S"] = 1
+    }
+  } else if (abs(g[2])<1e-4) {
+    if (dynamic_vars$model == "K99") {
+      cur_phase = atan2(y["xc"], y["x"])
+      if (cur_phase < 0) { # needed to ensure we don't pick up the flip to the positive angle
+        y["CBT_min"] = (t %% 24) + pvec_C["phi_adj"]
+      }
+    } else if (dynamic_vars$model == "FJK") {
+      if (y["x"] < 0) {
+        y["CBT_min"] = (t %% 24)
+      }
+    }
+  }
+  return(y)
 }
 
 # One RK4 step of the 2024 ODE over step h (hours)
-.mccauley2024_derivs <- function(p,u,k,h, t_abs, wake, pvec) {
-  with(as.list(pvec), {
-    if (wake) {
-      #c_t  <- unified_Cfun(t_abs%%Tp,Tp-phi) # optionally allow use of 5-harmonic Circadian function
-      c_t  <- mccauley2024_cfun(t_abs, phi)
-      g_w <- k * (c_t + mu_w)
-      dp <- -alpha_w * (p - pf - beta_w*u) + xi_h*(alpha_w -v_w)*h + xi_k*g_w
-      du <- -eta_w * (zeta_w * xi_u * (p - pf) - u) + eta_w*zeta_w*xi_u*xi_h*h
-      dk <- lambda_w * k * (1 - k)
-      dh <- -v_w*h
+.mccauley2024_derivs <- function(t, state, parms, df, ...) {
+  with(as.list(c(state, parms)), {
+    j <- findInterval(t, df$t_abs, rightmost.closed = TRUE) # use the row corresponding to t<=t_abs
+    if (!("x" %in% names(state))) {
+      C <- mccauley_cfun(t, phi)
     } else {
-      #c_t  <- unified_Cfun(t_abs%%Tp,(Tp-phi)+12)
-      c_t  <- mccauley2024_cfun(t_abs, phi)
-      g_s <- k * (c_t + mu_s)
-      dp <- -alpha_s * ( (1-  ((xi_h*gamma_h*v_s)/alpha_s))*(p - pf) - beta_s*(u - (1/eta_s))) + xi_h*(alpha_s - v_s*(1+gamma_h*xi_h))*h + xi_k*g_s
-      du <- eta_s*(zeta_s*xi_u *(p-pf) - u) - eta_s*zeta_s*xi_u*xi_h*h + 1
-      dk <- -lambda_s * k
-      dh <- -v_s*( (1+gamma_h*xi_h)*h - gamma_h*(p-pf))
+      C=-x # McCauley's model uses a peaking at night function
     }
-    c(dp = unname(dp), du = unname(du), dk = unname(dk), dh = unname(dh), c_t = unname(c_t))
+    if (S==0) {
+      g_w <- k * (C + mu_w)
+      dp <- -alpha_w * (p - pf - beta_w * u) + xi_h * (alpha_w - v_w) * h + xi_k * g_w
+      du <- -eta_w * (zeta_w * xi_u * (p - pf) - u) + eta_w * zeta_w * xi_u * xi_h * h
+      dk <- lambda_w * k * (1 - k)
+      dh <- -v_w * h
+    } else {
+      g_s <- k * (-C + mu_s)
+      dp <- -alpha_s * ((1 - ((xi_h * gamma_h * v_s) / alpha_s)) * (p - pf) - beta_s * (u - (1 / eta_s))) + xi_h * (alpha_s - v_s * (1 + gamma_h * xi_h)) * h + xi_k * g_s
+      du <- eta_s * (zeta_s * xi_u * (p - pf) - u) - eta_s * zeta_s * xi_u * xi_h * h + 1
+      dk <- -lambda_s * k
+      dh <- -v_s * ((1 + gamma_h * xi_h) * h - gamma_h * (p - pf))
+    }
+    c(unname(dp), unname(du), unname(dk), unname(dh),0)
   })
 }
 
-.mccauley2024_rk4  <- function(p,u,k,h,t0, hour_step, wake, pvec) {
-  k1 <- .mccauley2024_derivs(p,u,k,h,t0,wake,pvec)
-  k1dp=k1[["dp"]];k1du=k1[["du"]];k1dk=k1[["dk"]];k1dh=k1[["dh"]]
-  k2 <- .mccauley2024_derivs(p + 0.5*hour_step*k1dp, u + 0.5*hour_step*k1du, k + 0.5*hour_step*k1dk, h + 0.5*hour_step*k1dh, t0 + 0.5*hour_step, wake, pvec)
-  k2dp=k2[["dp"]];k2du=k2[["du"]];k2dk=k2[["dk"]];k2dh=k2[["dh"]]
-  k3 <- .mccauley2024_derivs(p + 0.5*hour_step*k2dp, u + 0.5*hour_step*k2du, k + 0.5*hour_step*k2dk, h + 0.5*hour_step*k2dh, t0 + 0.5*hour_step, wake, pvec)
-  k3dp=k3[["dp"]];k3du=k3[["du"]];k3dk=k3[["dk"]];k3dh=k3[["dh"]]
-  k4 <- .mccauley2024_derivs(p +     hour_step*k3dp, u +     hour_step*k3du, k +     hour_step*k3dk, h +     hour_step*k3dh, t0 +     hour_step, wake, pvec)
-  k4dp=k4[["dp"]];k4du=k4[["du"]];k4dk=k4[["dk"]];k4dh=k4[["dh"]];k4c_t=k4[["c_t"]]
-  p_next <- p + (hour_step/6)*(k1dp + 2*k2dp + 2*k3dp + k4dp)
-  u_next <- u + (hour_step/6)*(k1du + 2*k2du + 2*k3du + k4du)
-  k_next <- k + (hour_step/6)*(k1dk + 2*k2dk + 2*k3dk + k4dk)
-  h_next <- h + (hour_step/6)*(k1dh + 2*k2dh + 2*k3dh + k4dh)
-  c_next <- as.numeric(k4[["c_t"]])  # last circadian sample (for logging); not critical
-  # keep k within [0, xi]
-  xi <- pvec[["xi_k"]]
-  if (!is.na(xi)) k_next <- max(0, min(xi, k_next))
-  list(p=p_next, u=u_next, k=k_next,c=c_next, h=h_next)
-}
+## Coupling for McCauley (2024) model with dynamic circadian (FJK - Forger et al 1999)
+## This keeps each subsystem modular while integrating as one ODE when needed.
+# Coupled function that shares S and C across subsystems if desired
+.mccauley2024_derivs_coupled <- function(t, y, parms, df, pvec_C,use_dynamic,dynamic_vars,...) {
+   # Phillips derivatives depend on dynamic C
+   d_mccauley <- .mccauley2024_derivs(
+      t = t,
+      state = y,
+      parms = parms,
+      df = df
+  )
 
-#' Simulate: McCauley Model
-#' Runs the McCauley et al. (2024) model over the supplied FIPS_df.
-#'
-#' @param pvec Parameter vector, see [mccauley2024_pvec]
-#' @param dat Input dataframe (ensure this is a FIPS_df)
-#'
-#' @return Dataframe with simulation results
-#' @export
-#' 
-mccauley2024_simulate  <- function(pvec, dat, substep_minutes = 2) {
-  # initial state
-  p <- pvec[["p0"]]; u <- pvec[["u0"]]; k <- pvec[["k0"]]; h <- pvec[["h0"]]
-  
-  # Choose substep
-  hour_step <- substep_minutes / 60  # hours
-  
-  for (i in seq_len(nrow(dat))) {
-    if (i>1) {
-      dt_row <- time_length(dat$datetime[i] - dat$datetime[i-1], "hour")
-      if (is.na(dt_row) || dt_row <= 0) {
-        # Fill circadian at row start for completeness
-        dat$c[i] <- mccauley2024_cfun(dat$time[i], pvec[["phi"]])
-        dat$p[i] <- p; dat$u[i] <- u; dat$k[i] <- k; dat$h[i] <- h
-        next
-      }
-      wake   <- dat$wake_status[i]
-      
-      t_abs  <- dat$time[i]
-      # Integrate in small steps to avoid large-step error
-      remaining <- dt_row
-      while (remaining > 0) {
-        step <- min(hour_step, remaining)
-        res  <- .mccauley2024_rk4(p, u, k, h, t_abs, step, wake, pvec)
-        p <- res$p; u <- res$u; k <- res$k; h <- res$h; c <-res$c
-        t_abs <- t_abs + step
-        remaining <- remaining - step
-      }
-      # Log end-of-row state and circadian (c at row end)
-      dat$p[i] <- p
-      dat$u[i] <- u
-      dat$k[i] <- k
-      dat$h[i] <- h
-      dat$c[i] <- c
-     
-    } else {
-      dat$p[i] <- pvec["p0"]
-      dat$u[i] <- pvec["u0"]
-      dat$k[i] <- pvec["k0"]
-      dat$h[i] <- pvec["h0"]
-      dat$c[i] <- mccauley2024_cfun(dat$time[i], pvec[["phi"]])
+  if (use_dynamic) {
+    if (dynamic_vars$model == "FJK") {
+      d_c <- unlist(.FJK_derivs(
+      t = t,
+      state = y,
+      parms = pvec_C,
+      df = df,
+      dynamic_vars = dynamic_vars
+      ))
+    } else if (dynamic_vars$model=="K99") {
+        d_c <- unlist(.K99_derivs(
+          t = t,
+          state = y,
+          parms = pvec_C,
+          df = df,
+          dynamic_vars = dynamic_vars
+        ))
     }
-    
+  } else {
+     return(list(d_mccauley))
   }
-  dat
+  return(list(c(d_mccauley, d_c)))
 }
 
-#' McCauley Simulation Dispatcher
-#'
-#' @param dat A FIPS_df
-#' @param pvec Parameter vector
-#' @param model_formula Optional formula for custom predictions
-#' 
-mccauley2024_simulation_dispatch  <- function(dat, pvec, model_formula = NULL, substep_minutes = 2) {
+mccauley2024_simulation_dispatch  <- function(
+  dat, 
+  pvec=mccauley2024_pvec,  pvec_C=FJK_pvec,
+  method = "lsoda",
+  use_dynamic = TRUE,
+  dynamic_vars = fips_default_dynamic_vars(model = "FJK"),
+  model_formula=NULL) {
+  dynamic_vars <- fips_normalize_dynamic_vars(dynamic_vars)
+  # Ensure required inputs exist
   mccauley2024_check_pvec(pvec)
-  dat <- mccauley2024_append_model_cols(dat)
-  dat <- mccauley2024_simulate(pvec, dat, substep_minutes = substep_minutes)
-  dat <- FIPS_simulation(dat, modeltype = "mccauley", pvec = pvec, pred_stat = "fatigue", pred_cols = mccauley2024_cols)
+  if (dynamic_vars$model == "FJK") {
+    FJK_check_pvec(pvec_C)
+  } else if (dynamic_vars$model=="K99") {
+    K99_check_pvec(pvec_C)
+  }
+  pvec_C <- .fips_adjust_pvec_for_light_metric(pvec_C, dynamic_vars, model_name = dynamic_vars$model)
+
+
+  # Prepare time and schedule columns
+  dat$t_abs <- dat$sim_hours + dat$time[1]
+  change_points <- dat$t_abs[dat$change_point == 1]
+
+  dat <- .fips_build_light_drive(dat, dynamic_vars)
+  S0 = as.numeric(dat$wake_status[1] == 0)
+  y0 <- c(
+    p = pvec[["p0"]],
+    u = pvec[["u0"]],
+    k = pvec[["k0"]],
+    h = pvec[["h0"]],
+    S = S0
+  )
+  if (use_dynamic) {
+    y0 = c(y0,
+      xc = pvec_C[["xc0"]],
+      x = pvec_C[["x0"]]
+    ) 
+    if (!dynamic_vars$approx_N) {
+      y0 = c(y0, L = pvec_C[["L0"]])
+    }
+    y0 = c(y0, CBT_min = pvec_C[["CBT_min0"]])
+  }
+
+  # Integrate the coupled system
+  ODE_results <- as.data.frame(deSolve::ode(
+    y = y0,
+    times = dat$t_abs,
+    func = .mccauley2024_derivs_coupled,
+    rootfun = .mccauley_rootfun,
+    parms = pvec,
+    method = method,
+    events = list(func = .mccauley_eventfun, root = TRUE, maxroot = 1e6),
+    df = dat,
+    change_points = change_points,
+    pvec_C = pvec_C,
+    use_dynamic = use_dynamic,
+    dynamic_vars=dynamic_vars
+  )) %>% dplyr::rename(t_abs = time)
+
+  # Merge back to data; compute Phillips outputs using dynamic C from the path
+  dat <- dat %>%
+    dplyr::left_join(ODE_results, by = "t_abs")
+  
+  # Keep downstream processing consistent with Phillips interface
+  if (use_dynamic & dynamic_vars$model=="FJK") {
+    pred_cols = unique(c(mccauley2024_cols, FJK_cols))
+  } else if (use_dynamic & dynamic_vars$model=="K99") {
+    pred_cols = unique(c(mccauley2024_cols, K99_cols))
+  } else {
+    pred_cols = mccauley2024_cols
+    dat$C = mccauley_cfun(dat$t_abs,pvec["phi"])
+  }
+  dat <- FIPS_simulation(dat,
+    modeltype = "mccauley2024", pvec = pvec, pred_stat = "fatigue",
+    pred_cols = pred_cols
+  )
   if (is.null(model_formula)) {
     dat <- process_bmm_formula(dat, fatigue~p, pvec)
   } else {
@@ -248,15 +309,19 @@ mccauley2024_make_inits <- function(
     sim_start,
     sleep_hrs = 8,
     wake_time = "07:30:00",
+    series_start_time = 23.5,
     ndays = 30,
     tz = NULL,
-    round_minutes = 30,
+    round_minutes = 5,
     pvec = mccauley2024_pvec,
-    substep_minutes = 2,
+    pvec_C = FJK_pvec,
+    dynamic_C = FALSE,
+    dynamic_vars=fips_default_dynamic_vars(model = "FJK"),
     return_equilibrium = FALSE,
     return_adaptation = FALSE,
     save_equilibrium_path = NULL
 ) {
+  dynamic_vars <- fips_normalize_dynamic_vars(dynamic_vars)
   stopifnot(inherits(sim_start, "POSIXct"))
   if (is.null(tz)) tz <- attr(sim_start, "tzone") %||% "UTC"
   if (!mccauley2024_check_pvec(pvec)) stop("Invalid `pvec`.")
@@ -296,7 +361,10 @@ mccauley2024_make_inits <- function(
   adaptation_run <- FIPS_simulate(
     FIPS_df   = adaptation_df,
     modeltype = "mccauley2024",
-    pvec      = pvec
+    pvec      = pvec,
+    pvec_C = pvec_C,
+    dynamic_C = dynamic_C,
+    dynamic_vars=dynamic_vars
   )
   
   # Final day of adaptation
@@ -304,17 +372,40 @@ mccauley2024_make_inits <- function(
   eq <- dplyr::filter(adaptation_run, datetime >= last_day_start)
   
   # Target time-of-day = time-of-day of sim_start
-  target_tod <- as.decimaltime(sim_start)
+  target_tod <- series_start_time
   # Find closest row (tolerant to rounding)
   idx <- which.min(abs(eq$time - target_tod))
   if (length(idx) == 0L || is.na(idx)) stop("Failed to locate target time-of-day in equilibrium day.")
   
-  inits <- c(
-    p0 = unname(eq$p[idx]),
-    u0 = unname(eq$u[idx]),
-    k0 = unname(eq$k[idx]),
-    h0 = unname(eq$h[idx])
-  )
+  if (dynamic_C & !dynamic_vars$approx_N) {
+    inits <- c(
+      p0 = unname(eq$p[idx]),
+      u0 = unname(eq$u[idx]),
+      k0 = unname(eq$k[idx]),
+      h0 = unname(eq$h[idx]),
+      xc0 = unname(eq$xc[idx]),
+      x0 = unname(eq$x[idx]),
+      L0 = unname(eq$L[idx]),
+      CBT_min0 = unname(eq$CBT_min[idx])
+    )
+  } else if (dynamic_C & dynamic_vars$approx_N) {
+    inits <- c(
+      p0 = unname(eq$p[idx]),
+      u0 = unname(eq$u[idx]),
+      k0 = unname(eq$k[idx]),
+      h0 = unname(eq$h[idx]),
+      xc0 = unname(eq$xc[idx]),
+      x0 = unname(eq$x[idx]),
+      CBT_min0 = unname(eq$CBT_min[idx])
+    )
+  } else {
+    inits <- c(
+      p0 = unname(eq$p[idx]),
+      u0 = unname(eq$u[idx]),
+      k0 = unname(eq$k[idx]),
+      h0 = unname(eq$h[idx])
+    )
+  }
   
   if (!is.null(save_equilibrium_path)) {
     saveRDS(eq, file = save_equilibrium_path)
@@ -341,25 +432,36 @@ mccauley2024_init_pvec <- function(
     sim_start,
     sleep_hrs = 8,
     wake_time = "07:30:00",
+    series_start_time = 23.5,
     ndays = 30,
     tz = NULL,
     round_minutes = 30,
     pvec = mccauley2024_pvec,
-    substep_minutes = 2
+    pvec_C = FJK_pvec,
+    dynamic_C = FALSE,
+    dynamic_vars=fips_default_dynamic_vars(model = "FJK")
 ) {
+  dynamic_vars <- fips_normalize_dynamic_vars(dynamic_vars)
   inits <- mccauley2024_make_inits(
     sim_start = sim_start,
     sleep_hrs = sleep_hrs,
     wake_time = wake_time,
+    series_start_time = series_start_time,
     ndays = ndays,
     tz = tz,
     round_minutes = round_minutes,
     pvec = pvec,
-    substep_minutes = substep_minutes,
+    pvec_C = pvec_C,
+    dynamic_C = dynamic_C,
+    dynamic_vars=dynamic_vars,
     return_equilibrium = FALSE
   )
-  pvec[c("p0", "u0", "k0", "h0")] <- inits
-  pvec
+  pvec[c("p0", "u0", "k0", "h0")] <- inits[c("p0", "u0", "k0", "h0")]
+  if (dynamic_C & !dynamic_vars$approx_N) {
+    pvec_C[c("xc0","x0","L0","CBT_min0")] = inits[c("xc0","x0","L0","CBT_min0")]
+  } else if (dynamic_C & dynamic_vars$approx_N) {
+    pvec_C[c("xc0","x0","CBT_min0")] = inits[c("xc0","x0","CBT_min0")]
+  }
+  return(list(pvec = pvec, pvec_C = pvec_C))
 }
-
 
